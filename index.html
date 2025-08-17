@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+  <title>Dog vs Cat Snake</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      background: #0f1226;
+      color: #e7e9ff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      height: 100%;
+      overflow: hidden;
+    }
+    .wrap {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; gap: 10px;
+    }
+    canvas {
+      image-rendering: pixelated;
+      background: radial-gradient(1200px 800px at 50% 30%, #1c224a, #0f1226);
+      border: 2px solid #4b57c0; border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.5), inset 0 0 40px rgba(114,130,255,.15);
+    }
+    .hud {
+      display: flex; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap;
+      font-weight: 600; letter-spacing: .3px;
+      text-shadow: 0 2px 0 rgba(0,0,0,.35);
+    }
+    .btn {
+      background: #2a3175; border: 0; color: #fff; padding: 10px 14px; border-radius: 8px;
+      cursor: pointer; font-weight: 700;
+      box-shadow: 0 6px 16px rgba(0,0,0,.4);
+      transition: transform .08s ease, filter .08s ease;
+      user-select: none;
+    }
+    .btn:active { transform: translateY(1px) scale(.99); filter: brightness(.95); }
+    .kbd { padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18); }
+    .legend { opacity: .85; font-size: 14px; }
+    .gameover, .paused {
+      position: absolute; inset: 0; display: none; align-items: center; justify-content: center; pointer-events:none;
+    }
+    .panel {
+      background: rgba(15,18,38,.9); border: 2px solid #5662dd; border-radius: 12px; padding: 18px 22px; 
+      box-shadow: 0 20px 50px rgba(0,0,0,.6);
+      pointer-events: auto;
+    }
+    .panel h2 { margin: 0 0 6px; }
+    .touchpad {
+      position: fixed; inset: auto 0 16px 0; display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 64px);
+      place-items: center; gap: 8px; justify-content: center; user-select: none;
+    }
+    .touchbtn {
+      width: 64px; height: 64px; border-radius: 12px; border: 2px solid #5865f2; 
+      display: flex; align-items: center; justify-content: center; font-weight: 900;
+      background: rgba(88,101,242,.12);
+      color: #cfd4ff;
+      box-shadow: inset 0 0 20px rgba(88,101,242,.25);
+    }
+    @media (min-aspect-ratio: 3/2) {
+      .touchpad { bottom: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud" id="hud">
+      <div>Puan: <span id="score">0</span></div>
+      <div>Uzunluk: <span id="len">1</span></div>
+      <div>Hız: <span id="speed">1x</span></div>
+      <button class="btn" id="restart">Yeniden Başlat</button>
+      <button class="btn" id="pause">Duraklat <span class="kbd">P</span></button>
+    </div>
+    <canvas id="game" width="900" height="600" aria-label="Dog vs Cat Snake"></canvas>
+    <div class="legend">Kontroller: <span class="kbd">WASD</span> / <span class="kbd">Yön Tuşları</span> · <span class="kbd">P</span> Duraklat · Mobil: ekran düğmeleri</div>
+  </div>
+
+  <div class="gameover" id="over">
+    <div class="panel">
+      <h2>Oyun Bitti 🐾</h2>
+      <div>Puan: <span id="over-score">0</span></div>
+      <div>En İyi: <span id="best-score">0</span></div>
+      <div style="margin-top:10px; display:flex; gap:10px;">
+        <button class="btn" id="again">Tekrar Oyna</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="paused" id="paused">
+    <div class="panel">
+      <h2>Duraklatıldı ⏸️</h2>
+      <div>Devam için <span class="kbd">P</span> / butona tıkla.</div>
+    </div>
+  </div>
+
+  <div class="touchpad" id="touchpad" aria-hidden="true">
+    <div></div><div class="touchbtn" data-dir="up">▲</div><div></div>
+    <div class="touchbtn" data-dir="left">◀</div><div></div><div class="touchbtn" data-dir="right">▶</div>
+    <div></div><div class="touchbtn" data-dir="down">▼</div><div></div>
+  </div>
+
+  <script>
+  (()=>{
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const lenEl = document.getElementById('len');
+    const speedEl = document.getElementById('speed');
+    const over = document.getElementById('over');
+    const overScore = document.getElementById('over-score');
+    const bestScore = document.getElementById('best-score');
+    const againBtn = document.getElementById('again');
+    const restartBtn = document.getElementById('restart');
+    const pauseBtn = document.getElementById('pause');
+    const paused = document.getElementById('paused');
+
+    // Grid world
+    let grid = 25; // pixel per cell
+    let cols = Math.floor(canvas.width / grid);
+    let rows = Math.floor(canvas.height / grid);
+
+    // Resize canvas responsively
+    function fitCanvas() {
+      const maxW = Math.min(window.innerWidth - 20, 980);
+      const maxH = Math.min(window.innerHeight - 160, 740);
+      const targetW = Math.floor(maxW / grid) * grid;
+      const targetH = Math.floor(maxH / grid) * grid;
+      if (targetW >= grid*20 && targetH >= grid*14) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+        cols = Math.floor(canvas.width / grid);
+        rows = Math.floor(canvas.height / grid);
+      }
+    }
+    window.addEventListener('resize', fitCanvas);
+    fitCanvas();
+
+    const rnd = (n)=> Math.floor(Math.random()*n);
+    const clamp = (v,min,max)=> v<min?min:v>max?max:v;
+    const wrap = (x, max)=> (x + max) % max;
+
+    let dog, cat, bones, snake, dir, nextDir, tickRate, tick, score, best=Number(localStorage.getItem('dvcs_best')||0), gameOver=false, pausedState=false;
+
+    function init() {
+      score = 0; gameOver = false; pausedState=false;
+      tickRate = 8; // ticks per second
+      tick = 0;
+      snake = [{x: Math.floor(cols/2), y: Math.floor(rows/2)}];
+      dir = {x:1, y:0}; nextDir = {x:1,y:0};
+      dog = { color:'#ffe08a' };
+      cat = { x:rnd(cols), y:rnd(rows), vx:0, vy:0, cool:0, color:'#ff9ad5' };
+      bones = [];
+      spawnBone();
+      updateHUD();
+      over.style.display = 'none';
+      paused.style.display = 'none';
+    }
+
+    function spawnBone() {
+      let pos;
+      do {
+        pos = { x:rnd(cols), y:rnd(rows) };
+      } while (collidesWithSnake(pos) || (cat.x===pos.x && cat.y===pos.y));
+      bones.push(pos);
+    }
+
+    function collidesWithSnake(p, includeHead=true) {
+      for (let i= includeHead?0:1; i<snake.length; i++) {
+        if (snake[i].x===p.x && snake[i].y===p.y) return true;
+      }
+      return false;
+    }
+
+    function setDir(nx, ny) {
+      if (nx===-dir.x && ny===-dir.y) return; // prevent 180 turn
+      nextDir = {x:nx, y:ny};
+    }
+
+    // Controls
+    window.addEventListener('keydown', (e)=>{
+      const k = e.key.toLowerCase();
+      if (k==='arrowup' || k==='w') setDir(0,-1);
+      else if (k==='arrowdown' || k==='s') setDir(0,1);
+      else if (k==='arrowleft' || k==='a') setDir(-1,0);
+      else if (k==='arrowright' || k==='d') setDir(1,0);
+      else if (k==='p') togglePause();
+    });
+
+    document.getElementById('touchpad').addEventListener('touchstart', (e)=>{
+      const t = e.target.closest('[data-dir]');
+      if (!t) return;
+      const d = t.getAttribute('data-dir');
+      if (d==='up') setDir(0,-1);
+      if (d==='down') setDir(0,1);
+      if (d==='left') setDir(-1,0);
+      if (d==='right') setDir(1,0);
+    }, {passive:true});
+
+    restartBtn.onclick = ()=>{ init(); };
+    againBtn.onclick = ()=>{ init(); };
+    pauseBtn.onclick = ()=>{ togglePause(); };
+
+    function togglePause() {
+      if (gameOver) return;
+      pausedState = !pausedState;
+      paused.style.display = pausedState ? 'flex' : 'none';
+    }
+
+    // Main loop
+    let last = performance.now();
+    function loop(now){
+      const dt = (now - last)/1000;
+      last = now;
+      if (!pausedState && !gameOver) {
+        tick += dt;
+        const tps = clamp(tickRate, 4, 20);
+        while (tick > 1/tps) {
+          step();
+          tick -= 1/tps;
+        }
+        draw();
+      }
+      requestAnimationFrame(loop);
+    }
+
+    function step() {
+      dir = nextDir;
+
+      // Move head
+      const head = { x: wrap(snake[0].x + dir.x, cols), y: wrap(snake[0].y + dir.y, rows) };
+      // Self collision
+      if (collidesWithSnake(head, true)) {
+        return endGame();
+      }
+
+      snake.unshift(head);
+
+      // Eat bone
+      let ate = false;
+      for (let i=0; i<bones.length; i++) {
+        if (bones[i].x===head.x && bones[i].y===head.y) {
+          bones.splice(i,1);
+          ate = true;
+          score += 5;
+          spawnBone();
+          if (tickRate < 16) tickRate += 0.25;
+          break;
+        }
+      }
+
+      // Catch cat
+      if (head.x===cat.x && head.y===cat.y) {
+        score += 15;
+        // grow by 2 (do not remove tail twice)
+        ate = true;
+        cat.x = rnd(cols); cat.y = rnd(rows); cat.cool = 12;
+        if (tickRate < 18) tickRate += 0.4;
+      }
+
+      // If not ate, remove tail
+      if (!ate) snake.pop();
+
+      // Move cat (evades dog head, simple steering)
+      const dx = wrap(cat.x - head.x, cols); // handle wrap distance
+      const dy = wrap(cat.y - head.y, rows);
+      // Choose the shorter direction considering wrap
+      const distX = Math.min((cat.x - head.x + cols) % cols, (head.x - cat.x + cols) % cols);
+      const distY = Math.min((cat.y - head.y + rows) % rows, (head.y - cat.y + rows) % rows);
+      let moveX = 0, moveY = 0;
+
+      if (cat.cool>0) {
+        cat.cool--;
+        // random jitter while cooling down
+        if (Math.random()<0.6) {
+          const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+          const d = dirs[Math.floor(Math.random()*dirs.length)];
+          moveX = d[0]; moveY = d[1];
+        }
+      } else {
+        // steer away on the axis with shorter distance
+        if (distX < distY) {
+          moveX = (head.x===cat.x) ? (Math.random()<0.5?1:-1) : (( (cat.x - head.x + cols) % cols ) < ((head.x - cat.x + cols) % cols) ? 1 : -1);
+        } else {
+          moveY = (head.y===cat.y) ? (Math.random()<0.5?1:-1) : (( (cat.y - head.y + rows) % rows ) < ((head.y - cat.y + rows) % rows) ? 1 : -1);
+        }
+      }
+      cat.x = wrap(cat.x + moveX, cols);
+      cat.y = wrap(cat.y + moveY, rows);
+
+      updateHUD();
+    }
+
+    function endGame(){
+      gameOver = true;
+      overScore.textContent = score;
+      if (score > best) { best = score; localStorage.setItem('dvcs_best', String(best)); }
+      bestScore.textContent = best;
+      over.style.display = 'flex';
+    }
+
+    function updateHUD(){
+      scoreEl.textContent = score;
+      lenEl.textContent = snake.length;
+      speedEl.textContent = (tickRate/8).toFixed(1)+'x';
+    }
+
+    function drawGrid() {
+      ctx.save();
+      ctx.globalAlpha = .15;
+      for (let x=0; x<cols; x++) {
+        for (let y=0; y<rows; y++) {
+          if ((x+y)%2===0) {
+            ctx.fillStyle = '#6b75ff'; 
+            ctx.fillRect(x*grid, y*grid, grid, grid);
+          }
+        }
+      }
+      ctx.restore();
+    }
+
+    function drawGlowRect(x,y,w,h, color) {
+      const r = grid/2;
+      const cx = x + w/2, cy = y + h/2;
+      const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, Math.max(w,h));
+      g.addColorStop(0, color);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x-r, y-r, w+2*r, h+2*r);
+    }
+
+    function draw() {
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+      drawGrid();
+
+      // Bones
+      for (const b of bones) {
+        const x = b.x*grid, y = b.y*grid;
+        drawGlowRect(x,y,grid,grid,'rgba(255,255,255,.08)');
+        ctx.fillStyle = '#ffdca8';
+        ctx.fillRect(x+grid*0.2, y+grid*0.45, grid*0.6, grid*0.18);
+        ctx.fillRect(x+grid*0.35, y+grid*0.3, grid*0.3, grid*0.15);
+        ctx.fillRect(x+grid*0.35, y+grid*0.63, grid*0.3, grid*0.15);
+      }
+
+      // Cat
+      const cx = cat.x*grid, cy = cat.y*grid;
+      drawGlowRect(cx,cy,grid,grid,'rgba(255,120,200,.15)');
+      ctx.fillStyle = cat.color;
+      roundRect(ctx, cx+3, cy+3, grid-6, grid-6, 6, true);
+      // cat ears
+      ctx.fillStyle = '#ffb8e6';
+      ctx.beginPath(); ctx.moveTo(cx+grid*0.25, cy+grid*0.25); ctx.lineTo(cx+grid*0.45, cy+grid*0.25); ctx.lineTo(cx+grid*0.35, cy+grid*0.05); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx+grid*0.55, cy+grid*0.25); ctx.lineTo(cx+grid*0.75, cy+grid*0.25); ctx.lineTo(cx+grid*0.65, cy+grid*0.05); ctx.closePath(); ctx.fill();
+      // eyes
+      ctx.fillStyle = '#2a2040';
+      ctx.fillRect(cx+grid*0.35, cy+grid*0.45, grid*0.08, grid*0.12);
+      ctx.fillRect(cx+grid*0.57, cy+grid*0.45, grid*0.08, grid*0.12);
+
+      // Snake (dog)
+      for (let i=snake.length-1; i>=0; i--) {
+        const s = snake[i];
+        const x = s.x*grid, y = s.y*grid;
+        const body = i===0 ? '#ffe08a' : i%2? '#ffd06a' : '#e7c06a';
+        drawGlowRect(x,y,grid,grid,'rgba(255,210,140,.10)');
+        roundRect(ctx, x+2, y+2, grid-4, grid-4, 8, true, false, body);
+        if (i===0) {
+          // Dog ears
+          ctx.fillStyle = '#c89f5a';
+          ctx.fillRect(x+grid*0.18, y+grid*0.12, grid*0.16, grid*0.12);
+          ctx.fillRect(x+grid*0.66, y+grid*0.12, grid*0.16, grid*0.12);
+          // Nose
+          ctx.fillStyle = '#5a3b1a';
+          ctx.fillRect(x+grid*0.42, y+grid*0.6, grid*0.16, grid*0.16);
+          // Eyes
+          ctx.fillStyle = '#2a2040';
+          ctx.fillRect(x+grid*0.30, y+grid*0.40, grid*0.08, grid*0.12);
+          ctx.fillRect(x+grid*0.62, y+grid*0.40, grid*0.08, grid*0.12);
+        }
+      }
+    }
+
+    function roundRect(ctx, x, y, w, h, r, fill=true, stroke=false, color) {
+      ctx.beginPath();
+      ctx.moveTo(x+r, y);
+      ctx.arcTo(x+w, y, x+w, y+h, r);
+      ctx.arcTo(x+w, y+h, x, y+h, r);
+      ctx.arcTo(x, y+h, x, y, r);
+      ctx.arcTo(x, y, x+w, y, r);
+      ctx.closePath();
+      ctx.fillStyle = color || '#fff';
+      if (fill) ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+
+    init();
+    requestAnimationFrame(loop);
+  })();
+  </script>
+</body>
+</html>
